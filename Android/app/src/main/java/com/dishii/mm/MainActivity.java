@@ -34,6 +34,12 @@ import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.SeekBar;
+import android.widget.TextView;
+import android.graphics.Color;
+import androidx.constraintlayout.widget.ConstraintLayout;
+import android.view.Gravity;
 
 //This class is the main SDLActivity and just sets up a bunch of default files and the input overlay
 public class MainActivity extends SDLActivity{
@@ -355,6 +361,12 @@ public class MainActivity extends SDLActivity{
     private Button buttonToggle;
     private FrameLayout leftJoystick;
     private ImageView leftJoystickKnob;
+    private FrameLayout rightCJoystick;
+    private ImageView rightCJoystickKnob;
+    private Button editControlsButton;
+    private boolean controlEditMode = false;
+    private final java.util.ArrayList<View> editableControls = new java.util.ArrayList<>();
+    private final java.util.ArrayList<String> editableNames = new java.util.ArrayList<>();
     private View overlayView;
 
     // Function to set up the controller overlay (inflate layout and initialize buttons)
@@ -399,6 +411,8 @@ public class MainActivity extends SDLActivity{
         leftJoystickKnob = overlayView.findViewById(R.id.left_joystick_knob);
 
         FrameLayout rightScreenArea = overlayView.findViewById(R.id.right_screen_area);
+        rightCJoystick = overlayView.findViewById(R.id.right_c_joystick);
+        rightCJoystickKnob = overlayView.findViewById(R.id.right_c_joystick_knob);
 
         // Set OnTouchListeners for the Xbox controller buttons
         addTouchListener(buttonA, ControllerButtons.BUTTON_A); // SDL Button 0 (A)
@@ -421,34 +435,97 @@ public class MainActivity extends SDLActivity{
 
         // Setup joystick movement
         setupJoystick(leftJoystick, leftJoystickKnob, true); // Left joystick
+        if (rightCJoystick != null) setupJoystick(rightCJoystick, rightCJoystickKnob, false);
 
         setupLookAround(rightScreenArea);
 
         setupToggleButton(buttonToggle,buttonGroup);
+        setupTouchEditor(buttonGroup, rightScreenArea);
 
     }
 
     private void setupToggleButton(Button button, ViewGroup uiGroup){
-        boolean isHidden = preferences.getBoolean("controlsVisible", false); // Default to 'false' (visible)
-        uiGroup.setVisibility(isHidden ? View.INVISIBLE : View.VISIBLE); // Set the initial visibility based on the saved state
-        /*if(isHidden){
-            detachController();
-        }*/
-        button.setOnClickListener(new View.OnClickListener() {
-            boolean isHidden = false;
-            @Override
-            public void onClick(View v) {
-                if (isHidden) {
-                    uiGroup.setVisibility(View.VISIBLE); // Show UI elements
-                    //attachController();
-                } else {
-                    uiGroup.setVisibility(View.INVISIBLE); // Hide UI elements
-                    //detachController();
-                }
-                preferences.edit().putBoolean("controlsVisible", !isHidden).apply();
-                isHidden = !isHidden; // Toggle state
+        boolean hidden = preferences.getBoolean("controlsVisible", false);
+        uiGroup.setVisibility(hidden ? View.INVISIBLE : View.VISIBLE);
+        button.setOnClickListener(v -> {
+            boolean nowHidden = uiGroup.getVisibility() == View.VISIBLE;
+            uiGroup.setVisibility(nowHidden ? View.INVISIBLE : View.VISIBLE);
+            preferences.edit().putBoolean("controlsVisible", nowHidden).apply();
+        });
+    }
+
+    private void setupTouchEditor(ViewGroup group, FrameLayout rightScreenArea) {
+        int[] ids = {R.id.left_joystick, R.id.buttonLB, R.id.buttonRB, R.id.buttonZ,
+                R.id.buttonDpadUp, R.id.buttonDpadDown, R.id.buttonDpadLeft, R.id.buttonDpadRight,
+                R.id.buttonA, R.id.buttonB, R.id.buttonX, R.id.buttonY,
+                R.id.buttonStart, R.id.buttonBack, R.id.right_c_joystick};
+        String[] names = {"Joystick izquierdo", "L", "R", "Z", "Cruceta arriba", "Cruceta abajo",
+                "Cruceta izquierda", "Cruceta derecha", "A", "B", "X", "Y", "Start", "Back", "Joystick C derecho"};
+        for (int i=0; i<ids.length; i++) {
+            View v = overlayView.findViewById(ids[i]);
+            if (v != null) { editableControls.add(v); editableNames.add(names[i]); restoreTransform(v,i); }
+        }
+        editControlsButton = new Button(this);
+        editControlsButton.setText("✎"); editControlsButton.setTextSize(14);
+        editControlsButton.setTextColor(Color.WHITE);
+        editControlsButton.setAllCaps(false);
+        editControlsButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0x99000000));
+        ConstraintLayout.LayoutParams lp = new ConstraintLayout.LayoutParams(dp(38),dp(38));
+        lp.topToTop = ConstraintLayout.LayoutParams.PARENT_ID;
+        lp.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID;
+        lp.topMargin=dp(8); lp.rightMargin=dp(8);
+        ((androidx.constraintlayout.widget.ConstraintLayout)overlayView).addView(editControlsButton,lp);
+        editControlsButton.setOnClickListener(v -> {
+            controlEditMode = !controlEditMode;
+            editControlsButton.setText(controlEditMode ? "✓" : "✎");
+            if (controlEditMode) {
+                rightScreenArea.setVisibility(View.GONE);
+                buttonToggle.setOnTouchListener(null);
+                for(int i=0;i<editableControls.size();i++) installEditorTouch(editableControls.get(i),i);
+                Toast.makeText(this,"Arrastra los controles. Toca uno para tamaño y opacidad.",Toast.LENGTH_LONG).show();
+            } else {
+                for(int i=0;i<editableControls.size();i++) saveTransform(editableControls.get(i),i);
+                restoreTouchHandlers(rightScreenArea);
+                rightScreenArea.setVisibility(View.VISIBLE);
             }
         });
+    }
+    private int dp(float n){ return (int)(n*getResources().getDisplayMetrics().density+0.5f); }
+    private String prefKey(int i,String k){return "mm_touch_"+i+"_"+k;}
+    private void restoreTransform(View v,int i){
+        float x=preferences.getFloat(prefKey(i,"x"),0), y=preferences.getFloat(prefKey(i,"y"),0);
+        float z=preferences.getFloat(prefKey(i,"s"),1), a=preferences.getFloat(prefKey(i,"a"),1);
+        v.setTranslationX(x);v.setTranslationY(y);v.setScaleX(z);v.setScaleY(z);v.setAlpha(a);
+    }
+    private void saveTransform(View v,int i){preferences.edit().putFloat(prefKey(i,"x"),v.getTranslationX()).putFloat(prefKey(i,"y"),v.getTranslationY()).putFloat(prefKey(i,"s"),v.getScaleX()).putFloat(prefKey(i,"a"),v.getAlpha()).apply();}
+    private void installEditorTouch(View v,int i){
+        v.setOnTouchListener((view,e)->{
+            switch(e.getActionMasked()){
+                case MotionEvent.ACTION_DOWN: view.setTag(new float[]{e.getRawX(),e.getRawY()}); return true;
+                case MotionEvent.ACTION_MOVE:
+                    float[] last=(float[])view.getTag(); float dx=e.getRawX()-last[0],dy=e.getRawY()-last[1];
+                    view.setTranslationX(view.getTranslationX()+dx);view.setTranslationY(view.getTranslationY()+dy);
+                    view.setTag(new float[]{e.getRawX(),e.getRawY()}); return true;
+                case MotionEvent.ACTION_UP: showAdjustDialog(view,i);saveTransform(view,i);return true;
+            } return true;
+        });
+    }
+    private void showAdjustDialog(View v,int i){
+        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(20),dp(8),dp(20),dp(8));
+        TextView sizeText=new TextView(this), alphaText=new TextView(this); SeekBar size=new SeekBar(this), alpha=new SeekBar(this);
+        size.setMax(150);alpha.setMax(100);size.setProgress(Math.max(0,Math.min(150,Math.round((v.getScaleX()-0.5f)*100))));alpha.setProgress(Math.round(v.getAlpha()*100));
+        sizeText.setText("Tamaño: "+Math.round(v.getScaleX()*100)+"%");alphaText.setText("Opacidad: "+Math.round(v.getAlpha()*100)+"%");
+        size.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar b,int p,boolean u){float f=.5f+p/100f;v.setScaleX(f);v.setScaleY(f);sizeText.setText("Tamaño: "+Math.round(f*100)+"%");}public void onStartTrackingTouch(SeekBar b){}public void onStopTrackingTouch(SeekBar b){}});
+        alpha.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar b,int p,boolean u){v.setAlpha(p/100f);alphaText.setText("Opacidad: "+p+"%");}public void onStartTrackingTouch(SeekBar b){}public void onStopTrackingTouch(SeekBar b){}});
+        box.addView(sizeText);box.addView(size);box.addView(alphaText);box.addView(alpha);
+        new AlertDialog.Builder(this).setTitle(editableNames.get(i)).setView(box).setPositiveButton("Aceptar",(d,w)->saveTransform(v,i)).show();
+    }
+    private void restoreTouchHandlers(FrameLayout area){
+        addTouchListener(buttonA,ControllerButtons.BUTTON_A);addTouchListener(buttonB,ControllerButtons.BUTTON_B);addTouchListener(buttonX,ControllerButtons.BUTTON_X);addTouchListener(buttonY,ControllerButtons.BUTTON_Y);
+        setupCButtons(buttonDpadUp,ControllerButtons.AXIS_RY,1);setupCButtons(buttonDpadDown,ControllerButtons.AXIS_RY,-1);setupCButtons(buttonDpadLeft,ControllerButtons.AXIS_RX,1);setupCButtons(buttonDpadRight,ControllerButtons.AXIS_RX,-1);
+        addTouchListener(buttonLB,ControllerButtons.BUTTON_LB);addTouchListener(buttonRB,ControllerButtons.BUTTON_RB);addTouchListener(buttonZ,ControllerButtons.AXIS_RT);addTouchListener(buttonStart,ControllerButtons.BUTTON_START);addTouchListener(buttonBack,ControllerButtons.BUTTON_BACK);
+        setupJoystick(leftJoystick,leftJoystickKnob,true);if(rightCJoystick!=null)setupJoystick(rightCJoystick,rightCJoystickKnob,false);setupLookAround(area);
+        buttonToggle.setOnTouchListener(null);
     }
 
     // Function to set a touch listener for each button
@@ -456,6 +533,7 @@ public class MainActivity extends SDLActivity{
         button.setOnTouchListener(new View.OnTouchListener() {
             @Override
             public boolean onTouch(View v, MotionEvent event) {
+                forwardTouchToSDL(event);
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
                         setButton(buttonNum, true);
@@ -505,6 +583,20 @@ public class MainActivity extends SDLActivity{
         TouchAreaEnabled = true;
     }
 
+    private void forwardTouchToSDL(MotionEvent event) {
+        int action = event.getActionMasked();
+        int index = event.getActionIndex();
+        int pointer = event.getPointerId(index);
+        int sdlAction;
+        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) sdlAction = 0;
+        else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_CANCEL) sdlAction =  upAction();
+        else if (action == MotionEvent.ACTION_MOVE) sdlAction = 2; else return;
+        float x = event.getX(index) / Math.max(1, overlayView.getWidth());
+        float y = event.getY(index) / Math.max(1, overlayView.getHeight());
+        SDLActivity.onNativeTouch(0, pointer, sdlAction, x, y, event.getPressure(index));
+    }
+    private int upAction(){ return 1; }
+
     private void setupLookAround(FrameLayout rightScreenArea) {
         rightScreenArea.setOnTouchListener(new View.OnTouchListener() {
             private float lastX = 0;
@@ -551,7 +643,7 @@ public class MainActivity extends SDLActivity{
                         setCameraState(1, 0.0f); // Reset right stick Y axis
                         break;
                 }
-                return TouchAreaEnabled; // Event full handled
+                return TouchAreaEnabled; // Camera gesture is consumed while enabled
             }
         });
     }
