@@ -70,6 +70,72 @@
     </FrameLayout>
 
 
+    <!-- C-right touch arrows. Direct children of button_group (NOT inside a
+         match_parent container) so a held C button never swallows the pointer
+         that drives the left joystick. Centered by constraints + translation. -->
+
+    <Button
+        android:id="@+id/buttonCRightUp"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        android:translationX="-200dp"
+        android:translationY="-52dp"
+        android:background="@drawable/ic_button"
+        android:text="▲"
+        android:textColor="#FFFFFFFF"
+        android:textSize="20sp"
+        android:padding="0dp" />
+
+    <Button
+        android:id="@+id/buttonCRightDown"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        android:translationX="-200dp"
+        android:translationY="52dp"
+        android:background="@drawable/ic_button"
+        android:text="▼"
+        android:textColor="#FFFFFFFF"
+        android:textSize="20sp"
+        android:padding="0dp" />
+
+    <Button
+        android:id="@+id/buttonCRightLeft"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        android:translationX="-252dp"
+        android:background="@drawable/ic_button"
+        android:text="◀"
+        android:textColor="#FFFFFFFF"
+        android:textSize="20sp"
+        android:padding="0dp" />
+
+    <Button
+        android:id="@+id/buttonCRightRight"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        android:translationX="-148dp"
+        android:background="@drawable/ic_button"
+        android:text="▶"
+        android:textColor="#FFFFFFFF"
+        android:textSize="20sp"
+        android:padding="0dp" />
+
     <ImageView
         android:id="@+id/imageView"
         android:layout_width="96dp"
@@ -122,52 +188,55 @@
         app:layout_constraintTop_toTopOf="parent"
         android:background="@android:color/transparent"/>
 
-    <!-- Face buttons. MainActivity can switch this cluster between ABXY and BAYX. -->
-    <FrameLayout
-        android:id="@+id/action_button_cluster"
-        android:layout_width="132dp"
-        android:layout_height="132dp"
+    <!-- Face buttons (flat). MainActivity repositions them for ABXY / BAYX / GameCube. -->
+
+    <Button
+        android:id="@+id/buttonX"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_marginEnd="68dp"
+        android:layout_marginBottom="123dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:background="@drawable/ic_button"
+        android:text="X"
+        android:textColor="#25FFFFFF"/>
+
+    <Button
+        android:id="@+id/buttonY"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_marginEnd="112dp"
+        android:layout_marginBottom="79dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:background="@drawable/ic_button"
+        android:text="Y"
+        android:textColor="#25FFFFFF"/>
+
+    <Button
+        android:id="@+id/buttonA"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
         android:layout_marginEnd="24dp"
+        android:layout_marginBottom="79dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:background="@drawable/ic_button"
+        android:text="A"
+        android:textColor="#25FFFFFF"/>
+
+    <Button
+        android:id="@+id/buttonB"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_marginEnd="68dp"
         android:layout_marginBottom="35dp"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <Button
-            android:id="@+id/buttonX"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:layout_gravity="top|center_horizontal"
-            android:background="@drawable/ic_button"
-            android:text="X"
-            android:textColor="#25FFFFFF"/>
-
-        <Button
-            android:id="@+id/buttonY"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:layout_gravity="center_vertical|start"
-            android:background="@drawable/ic_button"
-            android:text="Y"
-            android:textColor="#25FFFFFF"/>
-
-        <Button
-            android:id="@+id/buttonA"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:layout_gravity="center_vertical|end"
-            android:background="@drawable/ic_button"
-            android:text="A"
-            android:textColor="#25FFFFFF"/>
-
-        <Button
-            android:id="@+id/buttonB"
-            android:layout_width="44dp"
-            android:layout_height="44dp"
-            android:layout_gravity="bottom|center_horizontal"
-            android:background="@drawable/ic_button"
-            android:text="B"
-            android:textColor="#25FFFFFF"/>
-    </FrameLayout>
+        app:layout_constraintEnd_toEndOf="parent"
+        android:background="@drawable/ic_button"
+        android:text="B"
+        android:textColor="#25FFFFFF"/>
 
     <!-- Shoulder Buttons -->
     <Button
