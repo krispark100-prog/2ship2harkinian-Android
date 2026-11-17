@@ -1,4 +1,3 @@
-
 package com.twoshipfork.mm;
 import org.libsdl.app.SDLActivity;
 
@@ -52,6 +51,8 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.widget.ImageView;
+import android.widget.SeekBar;
+import android.graphics.drawable.GradientDrawable;
 
 //This class is the main SDLActivity and just sets up a bunch of default files and the input overlay
 public class MainActivity extends SDLActivity{
@@ -976,6 +977,12 @@ public class MainActivity extends SDLActivity{
     private float leftStickFixedY = Float.NaN;
     private float rightStickStartX;
     private float rightStickStartY;
+    private FrameLayout touchEditorLayer;
+    private Button touchEditorButton;
+    private boolean touchEditorEnabled = false;
+    private View editorSelectedView;
+    private float editorDownX, editorDownY, editorViewStartX, editorViewStartY;
+    private boolean editorDragged;
 
     // Function to set up the controller overlay (inflate layout and initialize buttons)
     private void setupControllerOverlay() {
@@ -1041,6 +1048,12 @@ public class MainActivity extends SDLActivity{
         setupCButtons(buttonDpadLeft, ControllerButtons.BUTTON_DPAD_LEFT);
         setupCButtons(buttonDpadRight, ControllerButtons.BUTTON_DPAD_RIGHT);
 
+        // C-right arrows provide the right-stick directions as on the OoT Android build.
+        setupCRightButton(overlayView.findViewById(R.id.buttonCRightUp), 0, -1);
+        setupCRightButton(overlayView.findViewById(R.id.buttonCRightDown), 0, 1);
+        setupCRightButton(overlayView.findViewById(R.id.buttonCRightLeft), -1, 0);
+        setupCRightButton(overlayView.findViewById(R.id.buttonCRightRight), 1, 0);
+
         addTouchListener(buttonLB, ControllerButtons.BUTTON_LB); // SDL Button 4 (LB)
         addTouchListener(buttonRB, ControllerButtons.BUTTON_RB); // SDL Button 5 (RB)
         addTouchListener(buttonZL, ControllerButtons.AXIS_LT);
@@ -1061,9 +1074,230 @@ public class MainActivity extends SDLActivity{
         setupLookAround(rightScreenArea);
 
         setupToggleButton(buttonToggle,buttonGroup);
+        setupTouchLayoutEditor();
+        restoreTouchLayout();
+        ensureFixedJoystickVisible();
         applyTouchLeftStickMode();
         applyTouchControlsVisibility();
 
+    }
+
+    // On-screen touch layout editor. Drag a control to reposition it; tap it in
+    // edit mode to adjust its size and opacity. All values persist across launches.
+    private void setupTouchLayoutEditor() {
+        if (!(overlayView instanceof ViewGroup)) return;
+        ViewGroup root = (ViewGroup) overlayView;
+        disableTouchControlClipping(root);
+        touchEditorLayer = new FrameLayout(this);
+        touchEditorLayer.setBackgroundColor(Color.TRANSPARENT);
+        touchEditorLayer.setVisibility(View.GONE);
+        root.addView(touchEditorLayer, new android.view.ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        touchEditorLayer.setOnTouchListener((v, event) -> handleTouchEditorEvent(event));
+
+        touchEditorButton = new Button(this);
+        touchEditorButton.setText("✎");
+        touchEditorButton.setTextSize(18);
+        touchEditorButton.setTextColor(Color.WHITE);
+        touchEditorButton.setPadding(0, 0, 0, 0);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(Color.argb(190, 35, 35, 35));
+        bg.setStroke(dpToPixels(1), Color.WHITE);
+        touchEditorButton.setBackground(bg);
+        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams pencilParams =
+                new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(dpToPixels(42), dpToPixels(42));
+        pencilParams.topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+        pencilParams.endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+        pencilParams.setMargins(0, dpToPixels(12), dpToPixels(12), 0);
+        root.addView(touchEditorButton, pencilParams);
+        touchEditorButton.setOnClickListener(v -> setTouchEditorEnabled(!touchEditorEnabled));
+    }
+
+    private void setTouchEditorEnabled(boolean enabled) {
+        touchEditorEnabled = enabled;
+        if (touchEditorLayer != null) touchEditorLayer.setVisibility(enabled ? View.VISIBLE : View.GONE);
+        if (touchEditorButton != null) {
+            touchEditorButton.setText(enabled ? "✓" : "✎");
+            touchEditorButton.setContentDescription(enabled ? "Cerrar editor de controles" : "Editar controles táctiles");
+        }
+        editorSelectedView = null;
+    }
+
+    private boolean handleTouchEditorEvent(MotionEvent event) {
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                editorSelectedView = findEditableControlAt(event.getX(), event.getY());
+                if (editorSelectedView == null) return true;
+                editorDownX = event.getX();
+                editorDownY = event.getY();
+                editorViewStartX = editorSelectedView.getTranslationX();
+                editorViewStartY = editorSelectedView.getTranslationY();
+                editorDragged = false;
+                return true;
+            case MotionEvent.ACTION_MOVE:
+                if (editorSelectedView != null) {
+                    float dx = event.getX() - editorDownX;
+                    float dy = event.getY() - editorDownY;
+                    if (Math.abs(dx) + Math.abs(dy) > dpToPixels(4)) editorDragged = true;
+                    if (editorDragged) {
+                        // Translation is layout independent, so it survives relayouts/restarts.
+                        editorSelectedView.setTranslationX(editorViewStartX + event.getX() - editorDownX);
+                        editorSelectedView.setTranslationY(editorViewStartY + event.getY() - editorDownY);
+                    }
+                }
+                return true;
+            case MotionEvent.ACTION_UP:
+                if (editorSelectedView != null) {
+                    if (editorDragged) saveTouchControl(editorSelectedView);
+                    else showTouchControlProperties(editorSelectedView);
+                }
+                editorSelectedView = null;
+                return true;
+            case MotionEvent.ACTION_CANCEL:
+                editorSelectedView = null;
+                return true;
+            default:
+                return true;
+        }
+    }
+
+    private void disableTouchControlClipping(View view) {
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            group.setClipChildren(false);
+            group.setClipToPadding(false);
+            for (int i = 0; i < group.getChildCount(); i++) disableTouchControlClipping(group.getChildAt(i));
+        }
+    }
+
+    private float[] getViewOriginInOverlay(View view) {
+        int[] viewLocation = new int[2];
+        int[] overlayLocation = new int[2];
+        view.getLocationOnScreen(viewLocation);
+        overlayView.getLocationOnScreen(overlayLocation);
+        return new float[] { viewLocation[0] - overlayLocation[0], viewLocation[1] - overlayLocation[1] };
+    }
+
+    private View findEditableControlAt(float x, float y) {
+        return findEditableChild(buttonGroup, x, y);
+    }
+
+    private View findEditableChild(ViewGroup parent, float x, float y) {
+        if (parent == null) return null;
+        int[] overlayLoc = new int[2];
+        overlayView.getLocationOnScreen(overlayLoc);
+        for (int i = parent.getChildCount() - 1; i >= 0; i--) {
+            View child = parent.getChildAt(i);
+            if (child.getVisibility() != View.VISIBLE || child.getId() == View.NO_ID) continue;
+            int id = child.getId();
+            if (id == R.id.left_screen_area || id == R.id.right_screen_area) continue;
+            if (id == R.id.left_joystick_knob) continue;
+            float[] origin = getViewOriginInOverlay(child);
+            float left = origin[0], top = origin[1];
+            float right = left + child.getWidth() * child.getScaleX();
+            float bottom = top + child.getHeight() * child.getScaleY();
+            if (x < left || x > right || y < top || y > bottom) continue;
+            if (child instanceof ViewGroup && id != R.id.left_joystick) {
+                View nested = findEditableChild((ViewGroup) child, x, y);
+                if (nested != null) return nested;
+                continue;
+            }
+            return child;
+        }
+        return null;
+    }
+
+    private String touchControlPreferenceKey(View view, String suffix) {
+        String name;
+        try { name = getResources().getResourceEntryName(view.getId()); }
+        catch (Exception e) { name = "control_" + view.getId(); }
+        return "touchEditor_" + name + "_" + suffix;
+    }
+
+    private void saveTouchControl(View view) {
+        touchBaseScale.put(view, view.getScaleX());
+        // New key names ("tx"/"ty") so stale absolute x/y values saved by older builds are ignored.
+        preferences.edit()
+                .putFloat(touchControlPreferenceKey(view, "tx"), view.getTranslationX())
+                .putFloat(touchControlPreferenceKey(view, "ty"), view.getTranslationY())
+                .putFloat(touchControlPreferenceKey(view, "scale"), view.getScaleX())
+                .putFloat(touchControlPreferenceKey(view, "alpha"), view.getAlpha())
+                .apply();
+    }
+
+    private void restoreTouchLayout() {
+        restoreTouchLayoutRecursive(buttonGroup);
+    }
+
+    private void restoreTouchLayoutRecursive(ViewGroup parent) {
+        if (parent == null) return;
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            View child = parent.getChildAt(i);
+            if (child.getId() != View.NO_ID) {
+                String xKey = touchControlPreferenceKey(child, "tx");
+                String yKey = touchControlPreferenceKey(child, "ty");
+                if (preferences.contains(xKey)) child.setTranslationX(preferences.getFloat(xKey, child.getTranslationX()));
+                if (preferences.contains(yKey)) child.setTranslationY(preferences.getFloat(yKey, child.getTranslationY()));
+                float scale = preferences.getFloat(touchControlPreferenceKey(child, "scale"), 1.0f);
+                setTouchControlScale(child, scale);
+                child.setAlpha(preferences.getFloat(touchControlPreferenceKey(child, "alpha"), child.getAlpha()));
+            }
+            if (child instanceof ViewGroup && child != leftJoystick) restoreTouchLayoutRecursive((ViewGroup) child);
+        }
+    }
+
+    private void showTouchControlProperties(View view) {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dpToPixels(20), dpToPixels(8), dpToPixels(20), dpToPixels(8));
+        TextView sizeLabel = new TextView(this);
+        sizeLabel.setText("Tamaño");
+        SeekBar size = new SeekBar(this);
+        size.setMax(150);
+        size.setProgress(Math.max(0, Math.min(150, Math.round((view.getScaleX() - 0.5f) * 150))));
+        TextView opacityLabel = new TextView(this);
+        opacityLabel.setText("Opacidad");
+        SeekBar opacity = new SeekBar(this);
+        opacity.setMax(100);
+        opacity.setProgress(Math.round(view.getAlpha() * 100));
+        panel.addView(sizeLabel);
+        panel.addView(size);
+        panel.addView(opacityLabel);
+        panel.addView(opacity);
+        final float originalScale = view.getScaleX();
+        final float originalAlpha = view.getAlpha();
+        final boolean[] saved = { false };
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Personalizar control")
+                .setView(panel)
+                .setPositiveButton("Guardar", (d, w) -> { saved[0] = true; saveTouchControl(view); })
+                .setNegativeButton("Cancelar", null)
+                .create();
+        dialog.setOnCancelListener(d -> {
+            setTouchControlScale(view, originalScale);
+            view.setAlpha(originalAlpha);
+        });
+        dialog.setOnDismissListener(d -> {
+            if (!saved[0]) {
+                setTouchControlScale(view, originalScale);
+                view.setAlpha(originalAlpha);
+            }
+        });
+        size.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                float scale = 0.5f + progress / 150.0f;
+                setTouchControlScale(view, scale);
+            }
+            public void onStartTrackingTouch(SeekBar bar) {}
+            public void onStopTrackingTouch(SeekBar bar) {}
+        });
+        opacity.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) { view.setAlpha(Math.max(0.1f, progress / 100.0f)); }
+            public void onStartTrackingTouch(SeekBar bar) {}
+            public void onStopTrackingTouch(SeekBar bar) {}
+        });
+        dialog.show();
     }
 
     public void setTouchControlsDisabledFromNative(boolean disabled) {
@@ -1080,63 +1314,82 @@ public class MainActivity extends SDLActivity{
     }
 
     public void setTouchLeftStickFloatingFromNative(boolean floating) {
-        preferences.edit().putBoolean(PREF_TOUCH_LEFT_STICK_FLOATING, floating).apply();
+        // This build uses a permanently fixed left stick, matching the OoT layout.
+        preferences.edit().putBoolean(PREF_TOUCH_LEFT_STICK_FLOATING, false).apply();
         runOnUiThread(this::applyTouchLeftStickMode);
+    }
+
+    // Make sure the fixed stick is visible/centered. Position, size and opacity
+    // come from the saved editor layout and are NOT overwritten here.
+    private void ensureFixedJoystickVisible() {
+        if (leftJoystick == null || leftJoystickKnob == null) return;
+        leftJoystick.post(() -> {
+            leftJoystick.setVisibility(View.VISIBLE);
+            leftJoystick.setEnabled(true);
+            leftJoystick.setClickable(false);
+            leftJoystick.setFocusable(false);
+            leftJoystickKnob.setVisibility(View.VISIBLE);
+            leftJoystickKnob.setAlpha(1.0f);
+            leftJoystickKnob.setScaleX(1.0f);
+            leftJoystickKnob.setScaleY(1.0f);
+            leftJoystickKnob.setX(leftJoystick.getWidth() / 2.0f - leftJoystickKnob.getWidth() / 2.0f);
+            leftJoystickKnob.setY(leftJoystick.getHeight() / 2.0f - leftJoystickKnob.getHeight() / 2.0f);
+            leftJoystick.invalidate();
+        });
     }
 
     private void applyTouchLeftStickMode() {
         if (leftJoystick == null) {
             return;
         }
-        boolean floating = preferences.getBoolean(PREF_TOUCH_LEFT_STICK_FLOATING, true);
-        if (!floating && !Float.isNaN(leftStickFixedX)) {
-            leftJoystick.setX(leftStickFixedX);
-            leftJoystick.setY(leftStickFixedY);
+        {
             leftJoystickKnob.setX(leftJoystick.getWidth() / 2.0f - leftJoystickKnob.getWidth() / 2.0f);
             leftJoystickKnob.setY(leftJoystick.getHeight() / 2.0f - leftJoystickKnob.getHeight() / 2.0f);
         }
-        leftJoystick.setVisibility(floating ? View.INVISIBLE : View.VISIBLE);
+        leftJoystick.setVisibility(View.VISIBLE);
+        leftJoystickKnob.setVisibility(View.VISIBLE);
     }
 
     private void applyTouchFaceButtonLayout(int layout) {
         if (buttonA == null || buttonB == null || buttonX == null || buttonY == null) {
             return;
         }
-
-        FrameLayout actionButtonCluster = overlayView.findViewById(R.id.action_button_cluster);
+        // Face buttons are direct children of button_group (no intermediate container whose
+        // bounds would make a dragged button untouchable). Each one is anchored to the
+        // bottom-end corner; (left, top) is its position inside the virtual cluster box.
+        final int marginEnd = 24, marginBottom = 35;
         if (layout == TOUCH_FACE_BUTTON_LAYOUT_GAMECUBE) {
-            setViewSize(actionButtonCluster, 200, 170);
-            configureFaceButton(buttonA, 70, 70, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 20, 0, 0, 20);
-            configureFaceButton(buttonB, 46, 46, Gravity.BOTTOM | Gravity.START, 30, 0, 0, 20);
-            configureFaceButton(buttonX, 46, 46, Gravity.TOP | Gravity.END, 0, 37, 0, 0);
-            configureFaceButton(buttonY, 46, 46, Gravity.TOP | Gravity.CENTER_HORIZONTAL, 0, 15, 0, 0);
+            // cluster 200x170
+            placeFaceButton(buttonA, 70, 85, 80, 200, 170, marginEnd, marginBottom);
+            placeFaceButton(buttonB, 46, 30, 104, 200, 170, marginEnd, marginBottom);
+            placeFaceButton(buttonX, 46, 154, 37, 200, 170, marginEnd, marginBottom);
+            placeFaceButton(buttonY, 46, 77, 15, 200, 170, marginEnd, marginBottom);
         } else if (layout == TOUCH_FACE_BUTTON_LAYOUT_BAYX) {
-            setViewSize(actionButtonCluster, 132, 132);
-            configureFaceButton(buttonA, 44, 44, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 0);
-            configureFaceButton(buttonB, 44, 44, Gravity.CENTER_VERTICAL | Gravity.END, 0, 0, 0, 0);
-            configureFaceButton(buttonX, 44, 44, Gravity.CENTER_VERTICAL | Gravity.START, 0, 0, 0, 0);
-            configureFaceButton(buttonY, 44, 44, Gravity.TOP | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 0);
+            placeFaceButton(buttonA, 44, 44, 88, 132, 132, marginEnd, marginBottom);
+            placeFaceButton(buttonB, 44, 88, 44, 132, 132, marginEnd, marginBottom);
+            placeFaceButton(buttonX, 44, 0, 44, 132, 132, marginEnd, marginBottom);
+            placeFaceButton(buttonY, 44, 44, 0, 132, 132, marginEnd, marginBottom);
         } else {
-            setViewSize(actionButtonCluster, 132, 132);
-            configureFaceButton(buttonB, 44, 44, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 0);
-            configureFaceButton(buttonA, 44, 44, Gravity.CENTER_VERTICAL | Gravity.END, 0, 0, 0, 0);
-            configureFaceButton(buttonY, 44, 44, Gravity.CENTER_VERTICAL | Gravity.START, 0, 0, 0, 0);
-            configureFaceButton(buttonX, 44, 44, Gravity.TOP | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 0);
+            placeFaceButton(buttonB, 44, 44, 88, 132, 132, marginEnd, marginBottom);
+            placeFaceButton(buttonA, 44, 88, 44, 132, 132, marginEnd, marginBottom);
+            placeFaceButton(buttonY, 44, 0, 44, 132, 132, marginEnd, marginBottom);
+            placeFaceButton(buttonX, 44, 44, 0, 132, 132, marginEnd, marginBottom);
         }
     }
 
-    private void configureFaceButton(Button button, int widthDp, int heightDp, int gravity,
-                                     int marginStartDp, int marginTopDp,
-                                     int marginEndDp, int marginBottomDp) {
-        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) button.getLayoutParams();
-        params.width = dpToPixels(widthDp);
-        params.height = dpToPixels(heightDp);
-        params.gravity = gravity;
-        int marginStart = dpToPixels(marginStartDp);
-        int marginEnd = dpToPixels(marginEndDp);
-        params.setMargins(marginStart, dpToPixels(marginTopDp), marginEnd, dpToPixels(marginBottomDp));
-        params.setMarginStart(marginStart);
-        params.setMarginEnd(marginEnd);
+    private void placeFaceButton(Button button, int sizeDp, int leftDp, int topDp,
+                                 int clusterWDp, int clusterHDp,
+                                 int clusterMarginEndDp, int clusterMarginBottomDp) {
+        androidx.constraintlayout.widget.ConstraintLayout.LayoutParams params =
+                (androidx.constraintlayout.widget.ConstraintLayout.LayoutParams) button.getLayoutParams();
+        params.width = dpToPixels(sizeDp);
+        params.height = dpToPixels(sizeDp);
+        params.endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+        params.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+        int mEnd = dpToPixels(clusterMarginEndDp + clusterWDp - leftDp - sizeDp);
+        int mBottom = dpToPixels(clusterMarginBottomDp + clusterHDp - topDp - sizeDp);
+        params.setMargins(0, 0, mEnd, mBottom);
+        params.setMarginEnd(mEnd);
         button.setLayoutParams(params);
     }
 
@@ -1151,9 +1404,25 @@ public class MainActivity extends SDLActivity{
         return Math.round(dp * getResources().getDisplayMetrics().density);
     }
 
+    // Custom size chosen in the editor, so the press animation never resets it to 1.0.
+    private final java.util.WeakHashMap<View, Float> touchBaseScale = new java.util.WeakHashMap<>();
+
+    private float getTouchBaseScale(View view) {
+        Float s = touchBaseScale.get(view);
+        return s != null ? s : 1.0f;
+    }
+
+    private void setTouchControlScale(View view, float scale) {
+        view.animate().cancel();
+        touchBaseScale.put(view, scale);
+        view.setScaleX(scale);
+        view.setScaleY(scale);
+    }
+
     private void setTouchButtonPressed(Button button, boolean pressed) {
         button.setPressed(pressed);
-        float scale = pressed ? 0.92f : 1.0f;
+        float base = getTouchBaseScale(button);
+        float scale = pressed ? base * 0.92f : base;
         button.animate().scaleX(scale).scaleY(scale).setDuration(60).start();
     }
 
@@ -1206,6 +1475,36 @@ public class MainActivity extends SDLActivity{
         });
     }
 
+    // Hold-to-press C-right arrows: map them to the virtual right analog stick.
+    private void setupCRightButton(View button, final int directionX, final int directionY) {
+        if (button == null) return;
+        button.setOnTouchListener((v, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                case MotionEvent.ACTION_POINTER_DOWN:
+                    if (directionX != 0) {
+                        setAxis(ControllerButtons.AXIS_RX,
+                                (short) (directionX * Short.MAX_VALUE));
+                    }
+                    if (directionY != 0) {
+                        setAxis(ControllerButtons.AXIS_RY,
+                                (short) (directionY * Short.MAX_VALUE));
+                    }
+                    v.setPressed(true);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_POINTER_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    if (directionX != 0) setAxis(ControllerButtons.AXIS_RX, (short) 0);
+                    if (directionY != 0) setAxis(ControllerButtons.AXIS_RY, (short) 0);
+                    v.setPressed(false);
+                    return true;
+                default:
+                    return true;
+            }
+        });
+    }
+
     private void setupCButtons(Button button, int buttonNum) {
         button.setOnTouchListener(new View.OnTouchListener() {
             @Override
@@ -1238,58 +1537,93 @@ public class MainActivity extends SDLActivity{
         TouchAreaEnabled = true;
     }
 
+    private boolean isTouchInsideFixedJoystick(MotionEvent event, int pointerIndex) {
+        if (leftJoystick == null || leftJoystick.getVisibility() != View.VISIBLE) return false;
+        int[] location = new int[2];
+        leftJoystick.getLocationOnScreen(location); // already top-left of the scaled view
+        float x = event.getRawX() + (event.getX(pointerIndex) - event.getX());
+        float y = event.getRawY() + (event.getY(pointerIndex) - event.getY());
+        float w = leftJoystick.getWidth() * leftJoystick.getScaleX();
+        float h = leftJoystick.getHeight() * leftJoystick.getScaleY();
+        return x >= location[0] && x <= location[0] + w
+                && y >= location[1] && y <= location[1] + h;
+    }
+
     private void setupFloatingJoystick(FrameLayout touchArea) {
         final float maxRadius = dpToPixels(51);
         leftJoystick.post(() -> {
-            leftStickFixedX = leftJoystick.getX();
-            leftStickFixedY = leftJoystick.getY();
             applyTouchLeftStickMode();
         });
         touchArea.setOnTouchListener((view, event) -> {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
-                    boolean floating = preferences.getBoolean(PREF_TOUCH_LEFT_STICK_FLOATING, true);
-                    if (floating) {
-                        leftStickStartX = event.getX();
-                        leftStickStartY = event.getY();
-                        leftJoystick.setX(leftStickStartX - leftJoystick.getWidth() / 2.0f);
-                        leftJoystick.setY(leftStickStartY - leftJoystick.getHeight() / 2.0f);
-                    } else {
-                        leftStickStartX = leftJoystick.getX() + leftJoystick.getWidth() / 2.0f;
-                        leftStickStartY = leftJoystick.getY() + leftJoystick.getHeight() / 2.0f;
-                    }
+                case MotionEvent.ACTION_POINTER_DOWN: {
+                    int index = event.getActionIndex();
+                    if (leftStickPointerId != MotionEvent.INVALID_POINTER_ID) return true;
+                    // The fixed stick responds ONLY when the finger starts inside
+                    // the visible joystick base. The rest of the left screen is not
+                    // a joystick touch zone.
+                    if (!isTouchInsideFixedJoystick(event, index)) return false;
+
+                    leftStickPointerId = event.getPointerId(index);
+                    int[] areaLoc = new int[2];
+                    int[] stickLoc = new int[2];
+                    view.getLocationOnScreen(areaLoc);
+                    leftJoystick.getLocationOnScreen(stickLoc);
+                    leftStickStartX = stickLoc[0] - areaLoc[0] + leftJoystick.getWidth() * leftJoystick.getScaleX() / 2.0f;
+                    leftStickStartY = stickLoc[1] - areaLoc[1] + leftJoystick.getHeight() * leftJoystick.getScaleY() / 2.0f;
+
                     leftJoystickKnob.setX(leftJoystick.getWidth() / 2.0f - leftJoystickKnob.getWidth() / 2.0f);
                     leftJoystickKnob.setY(leftJoystick.getHeight() / 2.0f - leftJoystickKnob.getHeight() / 2.0f);
                     leftJoystick.setVisibility(View.VISIBLE);
+                    updateLeftJoystickFromTouch(event.getX(index), event.getY(index), maxRadius);
                     return true;
-                case MotionEvent.ACTION_MOVE:
-                    float deltaX = event.getX() - leftStickStartX;
-                    float deltaY = event.getY() - leftStickStartY;
-                    float distance = (float) Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-                    if (distance > maxRadius && distance > 0.0f) {
-                        float scale = maxRadius / distance;
-                        deltaX *= scale;
-                        deltaY *= scale;
+                }
+                case MotionEvent.ACTION_MOVE: {
+                    int index = event.findPointerIndex(leftStickPointerId);
+                    if (index >= 0) {
+                        updateLeftJoystickFromTouch(event.getX(index), event.getY(index), maxRadius);
+                        return true;
                     }
-                    leftJoystickKnob.setX(leftJoystick.getWidth() / 2.0f + deltaX -
-                            leftJoystickKnob.getWidth() / 2.0f);
-                    leftJoystickKnob.setY(leftJoystick.getHeight() / 2.0f + deltaY -
-                            leftJoystickKnob.getHeight() / 2.0f);
-                    setAxis(ControllerButtons.AXIS_LX, (short) (deltaX / maxRadius * Short.MAX_VALUE));
-                    setAxis(ControllerButtons.AXIS_LY, (short) (deltaY / maxRadius * Short.MAX_VALUE));
-                    return true;
+                    return false;
+                }
+                case MotionEvent.ACTION_POINTER_UP:
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
-                    setAxis(ControllerButtons.AXIS_LX, (short) 0);
-                    setAxis(ControllerButtons.AXIS_LY, (short) 0);
-                    if (preferences.getBoolean(PREF_TOUCH_LEFT_STICK_FLOATING, true)) {
-                        leftJoystick.setVisibility(View.INVISIBLE);
+                    if (leftStickPointerId == MotionEvent.INVALID_POINTER_ID) return false;
+                    if (event.getActionMasked() == MotionEvent.ACTION_CANCEL ||
+                            event.getPointerId(event.getActionIndex()) == leftStickPointerId) {
+                        leftStickPointerId = MotionEvent.INVALID_POINTER_ID;
+                        setAxis(ControllerButtons.AXIS_LX, (short) 0);
+                        setAxis(ControllerButtons.AXIS_LY, (short) 0);
+                        leftJoystickKnob.setX(leftJoystick.getWidth() / 2.0f - leftJoystickKnob.getWidth() / 2.0f);
+                        leftJoystickKnob.setY(leftJoystick.getHeight() / 2.0f - leftJoystickKnob.getHeight() / 2.0f);
+                        leftJoystick.setVisibility(View.VISIBLE);
                     }
                     return true;
                 default:
-                    return true;
+                    return leftStickPointerId != MotionEvent.INVALID_POINTER_ID;
             }
         });
+    }
+
+
+    private void updateLeftJoystickFromTouch(float touchX, float touchY, float maxRadius) {
+        // maxRadius is in unscaled px; the stick may be resized in the editor.
+        float s = Math.max(0.1f, leftJoystick.getScaleX());
+        float radius = maxRadius * s;
+        float deltaX = touchX - leftStickStartX;
+        float deltaY = touchY - leftStickStartY;
+        float distance = (float) Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+        if (distance > radius && distance > 0.0f) {
+            float k = radius / distance;
+            deltaX *= k;
+            deltaY *= k;
+        }
+        leftJoystickKnob.setX(leftJoystick.getWidth() / 2.0f + deltaX / s - leftJoystickKnob.getWidth() / 2.0f);
+        leftJoystickKnob.setY(leftJoystick.getHeight() / 2.0f + deltaY / s - leftJoystickKnob.getHeight() / 2.0f);
+        setAxis(ControllerButtons.AXIS_LX, (short) (deltaX / radius * Short.MAX_VALUE));
+        setAxis(ControllerButtons.AXIS_LY, (short) (deltaY / radius * Short.MAX_VALUE));
     }
 
     private void setupTouchAreas(FrameLayout touchArea) {
